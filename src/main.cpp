@@ -14,7 +14,7 @@ static constexpr int SERVO_MAX_DEG = 180;
 static constexpr int SERVO_DEFAULT_DEG = 90;
 static constexpr int SERVO_ENCODER_FAST_DEG_PER_STEP = 13;
 static constexpr int SERVO_ENCODER_SLOW_DEG_PER_STEP = 5;
-static constexpr uint32_t LINK_TIMEOUT_MS = 1500;
+static constexpr uint32_t LINK_TIMEOUT_MS = 4000;
 static constexpr uint8_t BUTTON_IDX_GAIN_TOGGLE = 4;
 
 struct __attribute__((packed)) RemotePacket {
