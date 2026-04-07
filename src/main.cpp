@@ -12,6 +12,7 @@ static constexpr uint8_t SERVO_PIN = 1;  // GPIO1 / D1
 static constexpr int SERVO_MIN_DEG = 0;
 static constexpr int SERVO_MAX_DEG = 180;
 static constexpr int SERVO_DEFAULT_DEG = 90;
+static constexpr int SERVO_DEG_PER_ENCODER_STEP = 4;
 static constexpr uint32_t LINK_TIMEOUT_MS = 1500;
 
 struct __attribute__((packed)) RemotePacket {
@@ -30,6 +31,8 @@ volatile uint8_t gSourceMac[6] = {0};
 
 int gServoAngle = SERVO_DEFAULT_DEG;
 uint32_t gLastRxMs = 0;
+bool gHasLastEncoderPosition = false;
+int32_t gLastEncoderPosition = 0;
 
 static bool isZeroMac(const uint8_t* mac) {
   for (size_t i = 0; i < 6; ++i) {
@@ -153,9 +156,18 @@ void loop() {
 
     gLastRxMs = millis();
 
-    if (packet.encoderDelta != 0) {
-      setServoAngle(gServoAngle + packet.encoderDelta * 2);
+    int32_t movementSteps = packet.encoderDelta;
+    if (gHasLastEncoderPosition) {
+      movementSteps = packet.encoderPosition - gLastEncoderPosition;
     }
+    gLastEncoderPosition = packet.encoderPosition;
+    gHasLastEncoderPosition = true;
+
+    if (movementSteps != 0) {
+      setServoAngle(gServoAngle + static_cast<int>(movementSteps) *
+                                      SERVO_DEG_PER_ENCODER_STEP);
+    }
+
     applyButtonsToServo(packet.buttonsMask);
 
     if (packet.encoderPressed) {
