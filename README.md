@@ -8,6 +8,12 @@ Board power will come over USB and eventually over battery
 
 Serveo battery will be external with common ground
 
+## Remote control behavior (ESP-NOW)
+- Encoder left/right moves the servo.
+- Boot mode uses FAST encoder gain: 13 deg per encoder step.
+- Button 5 toggles encoder gain mode between FAST (13) and SLOW (5).
+- Button 6 recenters servo to default.
+
 ## Wiring
  - left/right movement servo on pin D0
  - eye lid servo on pin D1

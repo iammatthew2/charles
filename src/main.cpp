@@ -12,8 +12,10 @@ static constexpr uint8_t SERVO_PIN = 1;  // GPIO1 / D1
 static constexpr int SERVO_MIN_DEG = 0;
 static constexpr int SERVO_MAX_DEG = 180;
 static constexpr int SERVO_DEFAULT_DEG = 90;
-static constexpr int SERVO_DEG_PER_ENCODER_STEP = 4;
+static constexpr int SERVO_ENCODER_FAST_DEG_PER_STEP = 13;
+static constexpr int SERVO_ENCODER_SLOW_DEG_PER_STEP = 5;
 static constexpr uint32_t LINK_TIMEOUT_MS = 1500;
+static constexpr uint8_t BUTTON_IDX_GAIN_TOGGLE = 4;
 
 struct __attribute__((packed)) RemotePacket {
   uint32_t seq;
@@ -33,6 +35,8 @@ int gServoAngle = SERVO_DEFAULT_DEG;
 uint32_t gLastRxMs = 0;
 bool gHasLastEncoderPosition = false;
 int32_t gLastEncoderPosition = 0;
+uint8_t gPrevButtonsMask = 0;
+bool gUseSlowEncoderGain = false;
 
 static bool isZeroMac(const uint8_t* mac) {
   for (size_t i = 0; i < 6; ++i) {
@@ -68,8 +72,6 @@ static void applyButtonsToServo(uint8_t buttonsMask) {
     setServoAngle(90);
   } else if (buttonsMask & (1u << 3)) {
     setServoAngle(135);
-  } else if (buttonsMask & (1u << 4)) {
-    setServoAngle(180);
   }
 
   if (buttonsMask & (1u << 5)) {
@@ -142,6 +144,10 @@ void setup() {
     delay(3000);
     ESP.restart();
   }
+
+  Serial.print("Encoder gain mode: FAST (");
+  Serial.print(SERVO_ENCODER_FAST_DEG_PER_STEP);
+  Serial.println(" deg/step)");
 }
 
 void loop() {
@@ -163,9 +169,28 @@ void loop() {
     gLastEncoderPosition = packet.encoderPosition;
     gHasLastEncoderPosition = true;
 
+    bool toggleNowPressed =
+        (packet.buttonsMask & (1u << BUTTON_IDX_GAIN_TOGGLE)) != 0;
+    bool toggleWasPressed =
+        (gPrevButtonsMask & (1u << BUTTON_IDX_GAIN_TOGGLE)) != 0;
+    if (toggleNowPressed && !toggleWasPressed) {
+      gUseSlowEncoderGain = !gUseSlowEncoderGain;
+      Serial.print("Encoder gain mode -> ");
+      if (gUseSlowEncoderGain) {
+        Serial.print("SLOW (");
+        Serial.print(SERVO_ENCODER_SLOW_DEG_PER_STEP);
+      } else {
+        Serial.print("FAST (");
+        Serial.print(SERVO_ENCODER_FAST_DEG_PER_STEP);
+      }
+      Serial.println(" deg/step)");
+    }
+    gPrevButtonsMask = packet.buttonsMask;
+
     if (movementSteps != 0) {
-      setServoAngle(gServoAngle + static_cast<int>(movementSteps) *
-                                      SERVO_DEG_PER_ENCODER_STEP);
+      int gain = gUseSlowEncoderGain ? SERVO_ENCODER_SLOW_DEG_PER_STEP
+                                     : SERVO_ENCODER_FAST_DEG_PER_STEP;
+      setServoAngle(gServoAngle + static_cast<int>(movementSteps) * gain);
     }
 
     applyButtonsToServo(packet.buttonsMask);
@@ -182,6 +207,8 @@ void loop() {
     Serial.print(packet.buttonsMask, BIN);
     Serial.print(" encDelta=");
     Serial.print(packet.encoderDelta);
+    Serial.print(" gainMode=");
+    Serial.print(gUseSlowEncoderGain ? "slow" : "fast");
     Serial.print(" servo=");
     Serial.println(gServoAngle);
   }
@@ -192,5 +219,5 @@ void loop() {
     Serial.println("link timeout -> servo centered");
   }
 
-  delay(2);
+  delay(1);
 }
