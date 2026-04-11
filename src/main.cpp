@@ -20,6 +20,8 @@ static constexpr int EYELID_CLOSED_DEG = 90;
 static constexpr uint32_t LINK_TIMEOUT_MS = 4000;
 static constexpr uint8_t BUTTON_IDX_BLINK = 1;
 static constexpr uint8_t BUTTON_IDX_GAIN_TOGGLE = 4;
+static constexpr uint8_t BUTTON_IDX_SLEEP = 5;
+static constexpr uint8_t VALID_BUTTON_BITS = 0b00111111;  // Bits 0-5 only
 
 struct __attribute__((packed)) RemotePacket {
   uint32_t seq;
@@ -93,6 +95,18 @@ static void applyButtonsToPanServo(uint8_t buttonsMask) {
   } else if (buttonsMask & (1u << 3)) {
     setPanServoAngle(135);
   }
+}
+
+static void applySleepPose() {
+  // Sleep pose: center pan and close eyelid
+  setPanServoAngle(PAN_SERVO_DEFAULT_DEG);
+  setEyelidServoAngle(EYELID_CLOSED_DEG);
+  gEyelidClosed = true;
+}
+
+static void onSleepSignal() {
+  Serial.println("[SLEEP] Daryl entering deep sleep");
+  applySleepPose();
 }
 
 static void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data,
@@ -184,6 +198,12 @@ void loop() {
 
     gLastRxMs = millis();
 
+    // Filter out-of-band signals: anything with bits 6-7 set
+    if ((packet.buttonsMask & ~VALID_BUTTON_BITS) != 0) {
+      onSleepSignal();
+      return;
+    }
+
     int32_t movementSteps = packet.encoderDelta;
     if (gHasLastEncoderPosition) {
       movementSteps = packet.encoderPosition - gLastEncoderPosition;
@@ -247,10 +267,8 @@ void loop() {
 
   if (gLastRxMs != 0 && (millis() - gLastRxMs) > LINK_TIMEOUT_MS) {
     gLastRxMs = 0;
-    setPanServoAngle(PAN_SERVO_DEFAULT_DEG);
-    setEyelidServoAngle(EYELID_OPEN_DEG);
-    gEyelidClosed = false;
-    Serial.println("link timeout -> pan centered, eyelid opened");
+    applySleepPose();
+    Serial.println("link timeout -> sleep pose (pan centered, eyelid closed)");
   }
 
   delay(1);
