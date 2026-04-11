@@ -8,13 +8,17 @@
 // Optional sender MAC filter. Keep all zeros to accept packets from any sender.
 static uint8_t DARYL_MAC[6] = {0x00, 0x00, 0x00, 0x00, 0x00, 0x00};
 
-static constexpr uint8_t SERVO_PIN = 1;  // GPIO1 / D1
+static constexpr uint8_t PAN_SERVO_PIN = 1;     // GPIO0 / D0
+static constexpr uint8_t EYELID_SERVO_PIN = 0;  // GPIO1 / D1
 static constexpr int SERVO_MIN_DEG = 0;
 static constexpr int SERVO_MAX_DEG = 180;
-static constexpr int SERVO_DEFAULT_DEG = 90;
-static constexpr int SERVO_ENCODER_FAST_DEG_PER_STEP = 13;
-static constexpr int SERVO_ENCODER_SLOW_DEG_PER_STEP = 5;
+static constexpr int PAN_SERVO_DEFAULT_DEG = 90;
+static constexpr int PAN_SERVO_ENCODER_FAST_DEG_PER_STEP = 13;
+static constexpr int PAN_SERVO_ENCODER_SLOW_DEG_PER_STEP = 5;
+static constexpr int EYELID_OPEN_DEG = 0;
+static constexpr int EYELID_CLOSED_DEG = 90;
 static constexpr uint32_t LINK_TIMEOUT_MS = 4000;
+static constexpr uint8_t BUTTON_IDX_BLINK = 1;
 static constexpr uint8_t BUTTON_IDX_GAIN_TOGGLE = 4;
 
 struct __attribute__((packed)) RemotePacket {
@@ -26,17 +30,20 @@ struct __attribute__((packed)) RemotePacket {
   uint8_t encoderPressed;
 };
 
-Servo gServo;
+Servo gPanServo;
+Servo gEyelidServo;
 volatile bool gPacketReady = false;
 volatile RemotePacket gLatestPacket = {};
 volatile uint8_t gSourceMac[6] = {0};
 
-int gServoAngle = SERVO_DEFAULT_DEG;
+int gPanServoAngle = PAN_SERVO_DEFAULT_DEG;
+int gEyelidServoAngle = EYELID_OPEN_DEG;
 uint32_t gLastRxMs = 0;
 bool gHasLastEncoderPosition = false;
 int32_t gLastEncoderPosition = 0;
 uint8_t gPrevButtonsMask = 0;
 bool gUseSlowEncoderGain = false;
+bool gEyelidClosed = false;
 
 static bool isZeroMac(const uint8_t* mac) {
   for (size_t i = 0; i < 6; ++i) {
@@ -58,24 +65,33 @@ static void printMac(const uint8_t* mac) {
   Serial.print(macStr);
 }
 
-static void setServoAngle(int angle) {
-  gServoAngle = constrain(angle, SERVO_MIN_DEG, SERVO_MAX_DEG);
-  gServo.write(gServoAngle);
+static void setPanServoAngle(int angle) {
+  gPanServoAngle = constrain(angle, SERVO_MIN_DEG, SERVO_MAX_DEG);
+  gPanServo.write(gPanServoAngle);
 }
 
-static void applyButtonsToServo(uint8_t buttonsMask) {
-  if (buttonsMask & (1u << 0)) {
-    setServoAngle(0);
-  } else if (buttonsMask & (1u << 1)) {
-    setServoAngle(45);
-  } else if (buttonsMask & (1u << 2)) {
-    setServoAngle(90);
-  } else if (buttonsMask & (1u << 3)) {
-    setServoAngle(135);
-  }
+static void setEyelidServoAngle(int angle) {
+  gEyelidServoAngle = constrain(angle, SERVO_MIN_DEG, SERVO_MAX_DEG);
+  gEyelidServo.write(gEyelidServoAngle);
+}
 
-  if (buttonsMask & (1u << 5)) {
-    setServoAngle(SERVO_DEFAULT_DEG);
+static void toggleEyelid() {
+  if (gEyelidClosed) {
+    setEyelidServoAngle(EYELID_OPEN_DEG);
+    gEyelidClosed = false;
+  } else {
+    setEyelidServoAngle(EYELID_CLOSED_DEG);
+    gEyelidClosed = true;
+  }
+}
+
+static void applyButtonsToPanServo(uint8_t buttonsMask) {
+  if (buttonsMask & (1u << 0)) {
+    setPanServoAngle(0);
+  } else if (buttonsMask & (1u << 2)) {
+    setPanServoAngle(90);
+  } else if (buttonsMask & (1u << 3)) {
+    setPanServoAngle(135);
   }
 }
 
@@ -117,18 +133,24 @@ static bool initEspNow() {
   return true;
 }
 
-static void initServo() {
+static void initServos() {
   ESP32PWM::allocateTimer(0);
   ESP32PWM::allocateTimer(1);
   ESP32PWM::allocateTimer(2);
   ESP32PWM::allocateTimer(3);
 
-  gServo.setPeriodHertz(50);
-  gServo.attach(SERVO_PIN, 1000, 2000);
-  setServoAngle(SERVO_DEFAULT_DEG);
+  gPanServo.setPeriodHertz(50);
+  gPanServo.attach(PAN_SERVO_PIN, 1000, 2000);
+  setPanServoAngle(PAN_SERVO_DEFAULT_DEG);
 
-  Serial.print("Servo attached to GPIO");
-  Serial.println(SERVO_PIN);
+  gEyelidServo.setPeriodHertz(50);
+  gEyelidServo.attach(EYELID_SERVO_PIN, 1000, 2000);
+  setEyelidServoAngle(EYELID_OPEN_DEG);
+
+  Serial.print("Pan servo attached to GPIO");
+  Serial.println(PAN_SERVO_PIN);
+  Serial.print("Eyelid servo attached to GPIO");
+  Serial.println(EYELID_SERVO_PIN);
 }
 
 void setup() {
@@ -138,7 +160,7 @@ void setup() {
   Serial.println();
   Serial.println("Charles ESP-NOW receiver booting...");
 
-  initServo();
+  initServos();
   if (!initEspNow()) {
     Serial.println("Setup failed. Rebooting in 3 seconds...");
     delay(3000);
@@ -146,7 +168,7 @@ void setup() {
   }
 
   Serial.print("Encoder gain mode: FAST (");
-  Serial.print(SERVO_ENCODER_FAST_DEG_PER_STEP);
+  Serial.print(PAN_SERVO_ENCODER_FAST_DEG_PER_STEP);
   Serial.println(" deg/step)");
 }
 
@@ -169,34 +191,42 @@ void loop() {
     gLastEncoderPosition = packet.encoderPosition;
     gHasLastEncoderPosition = true;
 
+    uint8_t prevButtonsMask = gPrevButtonsMask;
+
+    bool blinkNowPressed = (packet.buttonsMask & (1u << BUTTON_IDX_BLINK)) != 0;
+    bool blinkWasPressed = (prevButtonsMask & (1u << BUTTON_IDX_BLINK)) != 0;
+    if (blinkNowPressed && !blinkWasPressed) {
+      toggleEyelid();
+    }
+
     bool toggleNowPressed =
         (packet.buttonsMask & (1u << BUTTON_IDX_GAIN_TOGGLE)) != 0;
     bool toggleWasPressed =
-        (gPrevButtonsMask & (1u << BUTTON_IDX_GAIN_TOGGLE)) != 0;
+        (prevButtonsMask & (1u << BUTTON_IDX_GAIN_TOGGLE)) != 0;
     if (toggleNowPressed && !toggleWasPressed) {
       gUseSlowEncoderGain = !gUseSlowEncoderGain;
       Serial.print("Encoder gain mode -> ");
       if (gUseSlowEncoderGain) {
         Serial.print("SLOW (");
-        Serial.print(SERVO_ENCODER_SLOW_DEG_PER_STEP);
+        Serial.print(PAN_SERVO_ENCODER_SLOW_DEG_PER_STEP);
       } else {
         Serial.print("FAST (");
-        Serial.print(SERVO_ENCODER_FAST_DEG_PER_STEP);
+        Serial.print(PAN_SERVO_ENCODER_FAST_DEG_PER_STEP);
       }
       Serial.println(" deg/step)");
     }
     gPrevButtonsMask = packet.buttonsMask;
 
     if (movementSteps != 0) {
-      int gain = gUseSlowEncoderGain ? SERVO_ENCODER_SLOW_DEG_PER_STEP
-                                     : SERVO_ENCODER_FAST_DEG_PER_STEP;
-      setServoAngle(gServoAngle + static_cast<int>(movementSteps) * gain);
+      int gain = gUseSlowEncoderGain ? PAN_SERVO_ENCODER_SLOW_DEG_PER_STEP
+                                     : PAN_SERVO_ENCODER_FAST_DEG_PER_STEP;
+      setPanServoAngle(gPanServoAngle + static_cast<int>(movementSteps) * gain);
     }
 
-    applyButtonsToServo(packet.buttonsMask);
+    applyButtonsToPanServo(packet.buttonsMask);
 
     if (packet.encoderPressed) {
-      setServoAngle(SERVO_DEFAULT_DEG);
+      setPanServoAngle(PAN_SERVO_DEFAULT_DEG);
     }
 
     Serial.print("rx seq=");
@@ -210,13 +240,17 @@ void loop() {
     Serial.print(" gainMode=");
     Serial.print(gUseSlowEncoderGain ? "slow" : "fast");
     Serial.print(" servo=");
-    Serial.println(gServoAngle);
+    Serial.print(gPanServoAngle);
+    Serial.print(" eyelid=");
+    Serial.println(gEyelidServoAngle);
   }
 
   if (gLastRxMs != 0 && (millis() - gLastRxMs) > LINK_TIMEOUT_MS) {
     gLastRxMs = 0;
-    setServoAngle(SERVO_DEFAULT_DEG);
-    Serial.println("link timeout -> servo centered");
+    setPanServoAngle(PAN_SERVO_DEFAULT_DEG);
+    setEyelidServoAngle(EYELID_OPEN_DEG);
+    gEyelidClosed = false;
+    Serial.println("link timeout -> pan centered, eyelid opened");
   }
 
   delay(1);

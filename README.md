@@ -9,10 +9,14 @@ Board power will come over USB and eventually over battery
 Serveo battery will be external with common ground
 
 ## Remote control behavior (ESP-NOW)
-- Encoder left/right moves the servo.
+- Encoder left/right moves the eyeball pan servo on D0.
 - Boot mode uses FAST encoder gain: 13 deg per encoder step.
-- Button 5 toggles encoder gain mode between FAST (13) and SLOW (5).
-- Button 6 recenters servo to default.
+- Button 1 (bit 0) snaps the pan servo to 0 deg.
+- Button 2 (bit 1) triggers a blink on the eyelid servo on D1.
+- Button 3 (bit 2) snaps the pan servo to 90 deg.
+- Button 4 (bit 3) snaps the pan servo to 135 deg.
+- Button 5 (bit 4) toggles encoder gain mode between FAST (13) and SLOW (5).
+- Encoder press recenters the pan servo to default when present in the payload.
 
 ## Wiring
  - left/right movement servo on pin D0
